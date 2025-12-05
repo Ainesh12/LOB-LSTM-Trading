@@ -1,0 +1,27 @@
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = PROJECT_ROOT / "data"
+
+MSG_FILENAME = "INTC_2012-06-21_34200000_57600000_message_10.csv"
+LOB_FILENAME = "INTC_2012-06-21_34200000_57600000_orderbook_10.csv"
+
+LVL = 3        
+LAMBDA = 0.5    
+DT_S = 1       
+SEQ_LEN = 100   
+
+BACKTEST_FRACTION = 0.5  
+VAL_FRACTION_TV = 0.15   
+
+NUM_HIDDEN_UNITS = 64
+NUM_NEURONS_FC1 = 10
+NUM_CLASSES = 3  
+
+BATCH_SIZE = 64
+NUM_EPOCHS = 10
+LEARNING_RATE = 1e-3
+
+HORIZON = 10     
+SEQ_LEN = 100
+LVL = 3          
