@@ -175,7 +175,7 @@ Offline Analytics & Evaluation
 ### Model
 
 - Architecture: **LSTM** sequence model (PyTorch)
-- Input: sequences of shape `(window=100, features=…)`
+- Input: sequences of shape `(window=100, features=4)`
 - Output: 2-class logits (up / down)
 - Loss: Cross-entropy
 - Optimizer: Adam
