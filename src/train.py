@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from .model import LOBLSTM
+import os
 
 
 def train_model(X_train, y_train, X_val, y_val, device="cpu"):
@@ -92,5 +93,7 @@ def train_model(X_train, y_train, X_val, y_val, device="cpu"):
 
     if best_state is not None:
         model.load_state_dict(best_state)
+        os.makedirs("artifacts", exist_ok=True)
+        torch.save(model.state_dict(), "artifacts/model_state_dict.pt")
 
     return model, history

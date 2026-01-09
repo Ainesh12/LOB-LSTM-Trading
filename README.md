@@ -1,16 +1,38 @@
-# LOB-LSTM Trading (In Progress)
+# LOB-LSTM Trading - Offline ML + Real-Time Streaming Pipeline
 
 Deep learning–based intraday trading strategy on **limit order book (LOB)** data using an **LSTM model**.  
-The current version focuses on **offline backtesting** in Python; the next phase will add a **real-time C++ execution engine** wired through **Redis**.
+This project combines:
+- **Offline ML research & backtesting** (Python, PyTorch)
+- **Production-style streaming inference** using **Redis Streams**
+- **Stateful online feature engineering**
+- **Durable batch sinks (Parquet)**
+- **Post-hoc analytics & calibration evaluation**
 
+The result is a reproducible, end-to-end ML data pipeline that mirrors real-world
+market data systems.
 ---
 
 ## Overview
 
-This project trains an LSTM model on **NASDQ LOBSTER** order book data (INTC) to predict **short-horizon mid-price direction** and backtests a simple long/short strategy based on the model’s signals.
+This repository implements an end-to-end ML system for limit order book data.
 
-**Completed so far:**
+### Offline ML
+- Train an **LSTM** on NASDAQ **LOBSTER** data (INTC)
+- Predict short-horizon **mid-price direction**
+- Backtest a simple long/short strategy
+- Track accuracy, loss, and equity vs. an upper-bound benchmark
 
+### Streaming ML System
+A production-style pipeline that:
+
+- Replays historical LOB events into **Redis Streams**
+- Maintains **stateful rolling feature windows** (100×4)
+- Runs **real-time PyTorch inference**
+- Publishes predictions back to Redis
+- Writes results to **Parquet** in configurable batches
+- Runs **offline analytics** to evaluate accuracy & calibration
+
+### Details
 - End-to-end Python pipeline:
   - Load & preprocess LOBSTER message/order book files
   - Compute order flow imbalance & midprice features
@@ -22,18 +44,45 @@ This project trains an LSTM model on **NASDQ LOBSTER** order book data (INTC) to
   - Equity curve vs. a “perfect foresight” upper bound
   - Signals & PnL visualization
 
-**In progress:**
+- Event Ingestion
+   - Historical LOB data is replayed into Redis Streams
+   - Simulates live market data while remaining fully reproducible
 
-- C++ low-latency trading engine (`cpp_engine/`)
-- Redis pub/sub bridge between Python model and C++ engine
-- Web dashboard for real-time equity/position monitoring
+- Stateful Stream Processing
+   - Maintains rolling feature windows per event
+   - Produces model-ready (100 × 4) tensors in real time
+   - Demonstrates online feature engineering (not batch)
 
+- Real-Time Model Serving
+   - Loads a trained PyTorch LSTM model
+   - Performs inference on streaming sequences
+   - Emits:
+      - prediction (pred)
+      - confidence (p_up)
+      - metadata (seq_len, feat_dim)
+
+- Durable Storage
+   - Predictions are written to Parquet in configurable batches
+   - Enables downstream analytics, replay, and auditing
+
+- Analytics & Measurement
+   - Aggregates streaming outputs
+   - Computes:
+      - overall accuracy
+      - average confidence
+      - accuracy vs confidence buckets (calibration)
 ---
 
 ## Project Structure
 
 ```text
 lob-lstm-trading/
+│
+├── analytics/                         # Post-run evaluation (streaming outputs)
+│   └── eval_predictions.py            # Reads parquet, computes acc/conf buckets, writes eval_summary.csv
+│
+├── artifacts/                         # Saved trained model artifacts
+│   └── model_state_dict.pt            # Best model weights (PyTorch state_dict)
 │
 ├── best_output_plots/        # Saved best-run plots (tracked)
 │   ├── accuracy_curves.png
@@ -45,10 +94,21 @@ lob-lstm-trading/
 │
 ├── cpp_engine/               # Planned C++ execution engine (redis)(in progress)
 │
-├── data/                     # LOBSTER CSVs: message/orderbook files
+├── data/
+│   ├── INTC_2012-06-21_...csv         # LOBSTER inputs (message/orderbook)
+│   └── predictions_parquet/           # Streaming inference sink (generated)
+│       ├── predictions_run=...parquet
+│       └── eval_summary.csv           # Confidence-bucket accuracy table
+│
+├── ingestion/                         # Producers + schemas
+│   ├── replay_csv_to_redis.py         # Replays historical events into Redis stream (producer)
+│   └── schemas.py                     # Event field definitions / validation helpers
 │
 ├── outputs/                  # Auto-generated outputs (per train outputs)(ignored in git)
 │
+├── scripts/
+│   └── export_torchscript.py           # (Optional) export model for torchscript/jit deployment
+|
 ├── src/
 │   ├── __init__.py
 │   ├── backtest.py           # Backtesting logic and equity calculation
@@ -60,14 +120,40 @@ lob-lstm-trading/
 │   ├── plotting.py           # Helper functions to generate plots
 │   └── train.py              # Training loop, evaluation & metrics
 │
+├── streaming/                         # Real-time pipeline on Redis Streams
+│   ├── feature_engine.py              # Online feature builder -> seq tensor (1, seq_len, feat_dim)
+│   ├── metrics.py                     # Throughput/latency counters + periodic logs
+│   ├── parquet_sink.py                # Writes predictions to parquet in batches
+│   ├── redis_consumer.py              # Basic consumer (debug/sequence readiness)
+│   ├── redis_infer_consumer.py        # Consumer → model inference → publish + parquet sink
+│   └── schema.py                      # Stream field names/types for lob:stream + lob:predictions
+│
 ├── .env.example              # Example environment variable file
 ├── .gitignore
-├── main.py                   # Full Python pipeline
+├── Makefile                  # One-command pipeline (make all) to run stream->infer->eval
+├── main.py                   # Offline end-to-end pipeline entrypoint
 ├── pyproject.toml            # Project/packaging config
 ├── requirements.txt          # Python dependencies
 └── README.md
 ```
 
+---
+## Streaming Architecture
+```text
+Historical LOB CSV
+        ↓
+Redis Stream (lob:stream)
+        ↓
+Stateful Feature Engine (rolling window = 100 events)
+        ↓
+PyTorch LSTM Inference
+        ↓
+Redis Predictions Stream (lob:predictions)
+        ↓
+Parquet Sink (batched writes)
+        ↓
+Offline Analytics & Evaluation
+```
 ---
 
 ## Data & Problem Setup
@@ -184,22 +270,48 @@ All plots below are from the **best run** and are stored in
 
 ---
 
-## In-Progress components inside cpp_engine/
+## Metrics & Observability
 
+During execution, the pipeline reports:
+
+- events processed per second
+- ready sequences produced
+- batch flush frequency
+- end-to-end prediction counts
+
+Offline analytics compute:
+
+- overall accuracy
+- average model confidence
+- accuracy vs confidence buckets (calibration)
+
+## Example Results
+
+From a 5,000 event replay:
+
+- Streaming predictions generated: ~4,000 (after sequence warm-up)
+- Overall accuracy: ~80%
+- High-confidence predictions (0.9–1.0):
+  - Accuracy: ~93%
+  - Average confidence: ~0.96
+
+This demonstrates a well-calibrated model operating in a streaming system.
+
+## Reproducibility
+
+1. Prerequisites
+   - Python 3.10+
+   - Redis (local)
+
+2. Offline ML : Train, Validate, Backtest
 ```text
-cpp_engine/
-├── include/
-│   └── engine/
-│       ├── TradingEngine.hpp
-│       └── MessageTypes.hpp
-├── src/
-│   ├── main.cpp               # Redis subscriber + event loop
-│   └── TradingEngine.cpp      # Strategy & PnL logic
-└── CMakeLists.txt
+python main.py
 ```
-### Notes
-- The Python LSTM + backtest pipeline is already working and produces the results shown above.
-- In-progress C++/Redis
+
+3. Real-Time Streaming Pipeline
+```text
+make all
+```
 
 ## License
 
